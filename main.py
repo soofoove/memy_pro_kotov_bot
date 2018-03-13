@@ -3,10 +3,10 @@ import vk_api
 import threading
 import os
 
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.environ["BOT_TOKEN"]
 PUBLIC_DOMEN = "memy_pro_kotow"
-VK_LOGIN = os.getenv("VK_LOGIN")
-VK_PASSWORD = os.getenv("VK_PASSWORD")
+VK_LOGIN = os.environ["VK_LOGIN"]
+VK_PASSWORD = os.environ["VK_PASSWORD"]
 
 def parse_response(response):
     """
