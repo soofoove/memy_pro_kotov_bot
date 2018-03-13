@@ -40,11 +40,12 @@ def main():
         print(error_msg)
         return
     vk = vk_session.get_api()
-    response = vk.wall.get(domain=PUBLIC_DOMEN, count=10)
+    
     bot = telebot.TeleBot(TOKEN)
 
     @bot.message_handler(commands=['start'])
     def proc_simple_message(message):
+        response = vk.wall.get(domain=PUBLIC_DOMEN, count=10)
         if response['items']:
             result = parse_response(response)
             for r in result:
