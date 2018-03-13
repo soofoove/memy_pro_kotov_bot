@@ -1,15 +1,6 @@
-from socket import *
+import telebot
 
-s = socket()
-s.bind(("", 8000))
+TOKEN = "574980005:AAEpFevnWRl6m3GYzFYFMhULbX2FCp8xmZg"
 
-s.listen(5)
+bot = telebot.TeleBot(TOKEN)
 
-
-while(True):
-    conn, addr = s.accept()
-
-    data = conn.recv(1024)
-    print(data.decode())
-
-    conn.send("""HTTP/1.1 200 OK\n\r\n\rHello, World!!!\n\r""".encode())
