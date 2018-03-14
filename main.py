@@ -13,8 +13,6 @@ def parse_response(response):
     Return result in the format [text_msg, attachment1, attachment2, ...]
     """
     result = []
-    if not response['items']:
-        return result
     
     for item in response['items']:
         temp = []
@@ -23,14 +21,24 @@ def parse_response(response):
         else:
             temp.append(item['text'])
         
-        if item['attachments']:
+        #if item['attachments']:
+        if 'attachments' in item.keys():
             for attachment in item['attachments']:
                 if attachment['type'] == 'photo':
                     temp.append(attachment['photo']['photo_604'])
         result.append(temp)
-
+    result.reverse()
     return result
 
+def load_last_hundred(vk):
+    count = 90
+    result = []
+    while count != 0:
+        response = vk.wall.get(domain=PUBLIC_DOMEN, count=10, offset=count)
+        result += parse_response(response)
+        count -= 10
+
+    return result
 
 def main():
     vk_session = vk_api.VkApi(VK_LOGIN, VK_PASSWORD)
@@ -43,17 +51,41 @@ def main():
     
     bot = telebot.TeleBot(TOKEN)
 
+    last_post = 0
+
     @bot.message_handler(commands=['start'])
-    def proc_simple_message(message):
-        response = vk.wall.get(domain=PUBLIC_DOMEN, count=10)
-        if response['items']:
-            result = parse_response(response)
-            for r in result:
-                text = r[0]
-                if len(r) > 1:
+    def start_work(message):
+        response = vk.wall.get(domain=PUBLIC_DOMEN, count=100)
+        last_post = response['items'][0]['id']
+        result = parse_response(response)
+        print("Result parsed. Last post: " + str(last_post))
+        for r in result:
+            text = r[0]
+            if len(r) > 1:
+                try:
                     bot.send_photo(message.chat.id, r[1], caption=text) 
+                except:
+                    print("Request exception occured, but I`m still alive")
         
+        bot.send_message(message.chat.id, "Type /shitty_update to manual update")
+
+    
+
+    @bot.message_handler(commands=['shitty_update'])
+    def update_work(message):
+        response = vk.wall.get(domain=PUBLIC_DOMEN, count=5)
+        last_post = response['items'][0]['id']
+        result = parse_response(response)
+        print("Result parsed. Last post: " + str(last_post))
+        for r in result:
+            text = r[0]
+            if len(r) > 1:
+                try:
+                    bot.send_photo(message.chat.id, r[1], caption=text) 
+                except:
+                    print("Request exception occured, but I`m still alive")
         
+        bot.send_message(message.chat.id, "Type /shitty_update to manual update")
 
     bot.polling()
 
