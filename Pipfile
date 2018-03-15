@@ -5,6 +5,7 @@ verify_ssl = true
 [packages]
 pyTelegramBotAPI = "*"
 vk_api = "*"
+wget = "*"
 
 [requires]
 python_version = "3.6"
