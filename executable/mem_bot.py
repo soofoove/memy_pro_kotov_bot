@@ -4,6 +4,8 @@ import telebot
 import os
 import wget
 import psycopg2
+import threading
+import time
 
 
 class MemyProKotovBot:
@@ -54,14 +56,14 @@ class MemyProKotovBot:
             return second_post['id']
         return first_post['id']
 
-    def _get_last_post_db(self, user):
-        self._db_cursor.execute("""SELECT last_post FROM users WHERE user_id = """ + str(user.id))
+    def _get_last_post_db(self, chat):
+        self._db_cursor.execute("""SELECT last_post FROM users WHERE chat_id = """ + str(chat.id))
         res = self._db_cursor.fetchall()
 
         return res[0][0]
 
-    def _set_last_post_db(self, last_post, user):
-        self._db_cursor.execute("""UPDATE users SET last_post = {0} WHERE user_id = {1}""".format(last_post, user.id))
+    def _set_last_post_db(self, last_post, chat):
+        self._db_cursor.execute("""UPDATE users SET last_post = {0} WHERE chat_id = {1}""".format(last_post, chat.id))
 
         self._db_conn.commit()
 
@@ -107,15 +109,15 @@ class MemyProKotovBot:
         self._send_retrieved_posts(result, message.chat)
         
         
-    def _user_registered(self, user):
-        self._db_cursor.execute("""SELECT * from users WHERE user_id = """ + str(user.id))
+    def _user_registered(self, chat):
+        self._db_cursor.execute("""SELECT * from users WHERE chat_id = """ + str(chat.id))
 
         rows = self._db_cursor.fetchall()
         if len(rows) == 0:
             return False
         return True
-    def _register_user(self, user_id, last_post_id):
-        self._db_cursor.execute("INSERT INTO users VALUES({0}, {1})".format(str(user_id), str(last_post_id)))
+    def _register_user(self, chat, last_post_id):
+        self._db_cursor.execute("INSERT INTO users VALUES({0}, {1})".format(str(chat.id), str(last_post_id)))
         self._db_conn.commit()
 
     def _retrieve_posts(self, last_post):
@@ -140,13 +142,42 @@ class MemyProKotovBot:
 
         return result, new_last_post
 
+    def _is_new_post(self, chat):
+        last_post = self._get_last_post_db(chat)
+        response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=2)
+
+        first = response['items'][0]
+        second = response['items'][1]
+
+        if 'is_pinned' in first.keys():
+            return second['id'] != last_post
+        else:
+            return first['id'] != last_post
+
+    def _perform_vk_update_loop(self, chat):
+        chat = telebot.types.Chat(chat, "null")
+        print("Started update loop for chat " + str(chat.id))
+        while True:
+            if self._is_new_post(chat):
+                last_post = self._get_last_post_db(chat)
+                result, last_post = self._retrieve_posts(last_post)
+        
+                self._send_retrieved_posts(result, chat)
+                self._set_last_post_db(last_post, chat)
+            else:
+                pass
+                #self.bot.send_message(chat.id, "Новых мемесов нет")
+            time.sleep(30)
+
+        
+
     def _add_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_work(message):
             #self.send_posts(message, 5)
-            if self._user_registered(message.from_user):
+            if self._user_registered(message.chat):
                 #Get last post id and retrieve all post until this value
-                last_post = self._get_last_post_db(message.from_user)
+                last_post = self._get_last_post_db(message.chat)
                 self.bot.send_message(message.chat.id, "You have been already registered. Your last post is " + str(last_post))
             else:
                 #Retrieve last 10 posts and add a user to DB with last post id
@@ -155,22 +186,35 @@ class MemyProKotovBot:
                 result = self._parse_response(response)
                 self._send_retrieved_posts(result, message.chat)
 
-                self._register_user(message.from_user.id, last_post)
+                self._register_user(message.chat, last_post)
 
-                self.bot.send_message(message.chat.id, "You are now registered with id " + str(message.from_user.id) + " and last post " + str(last_post))
+                self.bot.send_message(message.chat.id, "You are now registered with id " + str(message.chat.id) + " and last post " + str(last_post))
+                t = threading.Thread(target=self._perform_vk_update_loop, args=(message.chat.id, ))
+                t.start()
+                self.bot.send_message(message.chat.id, "You have been subscripted for updates")
 
 
         @self.bot.message_handler(commands=['update'])
         def update_work(message):
-            last_post = self._get_last_post_db(message.from_user)
-            result, last_post = self._retrieve_posts(last_post)
-            if len(result) == 0:
-                self.bot.send_message(message.chat.id, "Новых мемесов нет")
-            else: 
+            if self._is_new_post(message.chat):
+                last_post = self._get_last_post_db(message.chat)
+                result, last_post = self._retrieve_posts(last_post)
+    
                 self._send_retrieved_posts(result, message.chat)
-                self._set_last_post_db(last_post, message.from_user)
+                self._set_last_post_db(last_post, message.chat)
+            else:
+                self.bot.send_message(message.chat.id, "Новых мемесов нет")
 
 
         
     def updates_listener_start(self):
-        self.bot.polling()
+        poll = threading.Thread(target=self.bot.polling)
+        poll.start()
+        self._db_cursor.execute("""SELECT chat_id FROM users""")
+        rows = self._db_cursor.fetchall()
+
+        for row in rows:
+            t = threading.Thread(target=self._perform_vk_update_loop, args=(row[0], ))
+            t.start()
+
+        poll.join()
