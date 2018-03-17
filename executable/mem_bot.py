@@ -196,6 +196,9 @@ class MemyProKotovBot:
 
         @self.bot.message_handler(commands=['update'])
         def update_work(message):
+            if not self._user_registered(message.chat):
+                self.bot.send_message(message.chat.id, "Please, do /start before")
+                return
             if self._is_new_post(message.chat):
                 last_post = self._get_last_post_db(message.chat)
                 result, last_post = self._retrieve_posts(last_post)
