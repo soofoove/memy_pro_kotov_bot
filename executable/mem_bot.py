@@ -101,6 +101,7 @@ class MemyProKotovBot:
         return True
     def _register_user(self, user_id, last_post_id):
         self._db_cursor.execute("INSERT INTO users VALUES({0}, {1})".format(str(user_id), str(last_post_id)))
+        self._db_conn.commit()
     def _add_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_work(message):
