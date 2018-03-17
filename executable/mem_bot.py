@@ -20,7 +20,7 @@ class MemyProKotovBot:
 
     def _parse_response(self, response):
         """
-        Return result in the format [text_msg, attachment1, attachment2, ...]
+        Return result in the format: [text_msg, attachment1, attachment2, ...]
         """
         result = []
         
@@ -43,12 +43,27 @@ class MemyProKotovBot:
         return result
     
     def _get_last_post(self, api_response):
+        if len(api_response['items']) == 1:
+            if 'is_pinned' in api_response['items'][0].keys():
+                api_response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=2)
+
         first_post = api_response['items'][0]
         second_post = api_response['items'][1]
 
         if 'is_pinned' in first_post.keys():
             return second_post['id']
         return first_post['id']
+
+    def _get_last_post_db(self, user):
+        self._db_cursor.execute("""SELECT last_post FROM users WHERE user_id = """ + str(user.id))
+        res = self._db_cursor.fetchall()
+
+        return res[0][0]
+
+    def _set_last_post_db(self, last_post, user):
+        self._db_cursor.execute("""UPDATE users SET last_post = {0} WHERE user_id = {1}""".format(last_post, user.id))
+
+        self._db_conn.commit()
 
     def _send_retrieved_posts(self, posts, chat):
         for r in posts:
@@ -102,15 +117,37 @@ class MemyProKotovBot:
     def _register_user(self, user_id, last_post_id):
         self._db_cursor.execute("INSERT INTO users VALUES({0}, {1})".format(str(user_id), str(last_post_id)))
         self._db_conn.commit()
+
+    def _retrieve_posts(self, last_post):
+        new_last_post = 0
+        offset = 0
+        result = []
+        while True:
+            response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=1, offset = offset)
+            if 'is_pinned' in response['items'][0].keys():
+                offset += 1
+                continue
+            if response['items'][0]['id'] == last_post:
+                break
+            offset += 1
+
+        if offset == 0:
+            return result
+
+        response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=offset)
+        new_last_post = self._get_last_post(response)
+        result = self._parse_response(response)
+
+        return result, new_last_post
+
     def _add_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_work(message):
             #self.send_posts(message, 5)
             if self._user_registered(message.from_user):
                 #Get last post id and retrieve all post until this value
-                self._db_cursor.execute("""SELECT last_post FROM users WHERE user_id = """ + str(message.from_user.id))
-                res = self._db_cursor.fetchall()
-                self.bot.send_message(message.chat.id, "You are registered. Your last post is " + str(res[0][0]))
+                last_post = self._get_last_post_db(message.from_user)
+                self.bot.send_message(message.chat.id, "You have been already registered. Your last post is " + str(last_post))
             else:
                 #Retrieve last 10 posts and add a user to DB with last post id
                 response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=10)
@@ -123,13 +160,16 @@ class MemyProKotovBot:
                 self.bot.send_message(message.chat.id, "You are now registered with id " + str(message.from_user.id) + " and last post " + str(last_post))
 
 
-        @self.bot.message_handler(commands=['shitty_update'])
+        @self.bot.message_handler(commands=['update'])
         def update_work(message):
-            self.send_posts(message, 5)
+            last_post = self._get_last_post_db(message.from_user)
+            result, last_post = self._retrieve_posts(last_post)
+            if len(result) == 0:
+                self.bot.send_message(message.chat.id, "Новых мемесов нет")
+            else: 
+                self._send_retrieved_posts(result, message.chat)
+                self._set_last_post_db(last_post, message.from_user)
 
-        @self.bot.message_handler(commands=['stop'])
-        def stop_work(message):
-            print(message.from_user.first_name + "stoped sending.")
 
         
     def updates_listener_start(self):
