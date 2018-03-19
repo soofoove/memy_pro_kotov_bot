@@ -1,4 +1,6 @@
 from bot_settings import *
+import BD_Accessor
+import VK_Group
 import vk_api
 import telebot
 import os
@@ -6,68 +8,35 @@ import wget
 import psycopg2
 import threading
 import time
+import requests
 
 
 class MemyProKotovBot:
     def __init__(self):
+        self.users = []
+        self.last_post = 0
+
+        self.waiting_for_users = True
+
         self.vk_session = vk_api.VkApi(VK_LOGIN, VK_PASSWORD)
         self.vk_session.auth()       
-        self.vk = self.vk_session.get_api()
+        # self.vk = self.vk_session.get_api()
 
-        self._db_conn = psycopg2.connect(DATABASE_URL, sslmode='require')
-        self._db_cursor = self._db_conn.cursor()
+        self.__group = VK_Group.VkGroup(self.vk_session.get_api())
+        self.__ac = BD_Accessor.Accessor()
+
+        self._start_first_init()
         
         self.bot = telebot.TeleBot(TOKEN)
         self._add_handlers()
 
-    def _parse_response(self, response):
-        """
-        Return result in the format: [text_msg, attachment1, attachment2, ...]
-        """
-        result = []
-        
-        for item in response['items']:
-            if "is_pinned" in item.keys():
-                continue
-            temp = []
-            if not item['text']:
-                temp.append("")
-            else:
-                temp.append(item['text'])
-            
-            #if item['attachments']:
-            if 'attachments' in item.keys():
-                for attachment in item['attachments']:
-                    if attachment['type'] == 'photo':
-                        temp.append(attachment['photo']['photo_604'])
-            result.append(temp)
-        result.reverse()
-        return result
-    
-    def _get_last_post(self, api_response):
-        if len(api_response['items']) == 1:
-            if 'is_pinned' in api_response['items'][0].keys():
-                api_response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=2)
+    def _start_first_init(self):
+        self.users = self.__ac.get_all_users()
+        self.last_post = self.__ac.get_last_post()
 
-        first_post = api_response['items'][0]
-        second_post = api_response['items'][1]
+        print("Data loaded from DB")
 
-        if 'is_pinned' in first_post.keys():
-            return second_post['id']
-        return first_post['id']
-
-    def _get_last_post_db(self, chat):
-        self._db_cursor.execute("""SELECT last_post FROM users WHERE chat_id = """ + str(chat.id))
-        res = self._db_cursor.fetchall()
-
-        return res[0][0]
-
-    def _set_last_post_db(self, last_post, chat):
-        self._db_cursor.execute("""UPDATE users SET last_post = {0} WHERE chat_id = {1}""".format(last_post, chat.id))
-
-        self._db_conn.commit()
-
-    def _send_retrieved_posts(self, posts, chat):
+    def _send_retrieved_posts(self, posts, chat_id):
         for r in posts:
             text = r[0]
             if len(r) > 1:
@@ -75,15 +44,15 @@ class MemyProKotovBot:
                     if len(r) == 2:
                         # self.bot.send_photo(message.chat.id, r[1], caption=text)
                         if len(text) < 200:
-                            self.bot.send_photo(chat.id, r[1], caption=text)
+                            self.bot.send_photo(chat_id, r[1], caption=text)
                         else:
-                            self.bot.send_photo(chat.id, r[1])
-                            self.bot.send_message(chat.id, text)
+                            self.bot.send_photo(chat_id, r[1])
+                            self.bot.send_message(chat_id, text)
                     elif len(r) > 2:
                         media = [telebot.types.InputMediaPhoto(m) for m in r[1:]]
-                        self.bot.send_media_group(chat.id, media)
+                        self.bot.send_media_group(chat_id, media)
                         if text:
-                            self.bot.send_message(chat.id, text)
+                            self.bot.send_message(chat_id, text)
             
                 except Exception as exc:
                     #print("Request exception occured, but I`m still alive (" + str(exc) + ")")
@@ -94,130 +63,108 @@ class MemyProKotovBot:
                             downloaded.append(wget.download(address))
                         print("All pictures downloaded")
 
-                        self.bot.send_media_group(chat.id, [telebot.types.InputMediaPhoto(open(d, 'rb')) for d in downloaded])
+                        self.bot.send_media_group(chat_id, [telebot.types.InputMediaPhoto(open(d, 'rb')) for d in downloaded])
                         print("Done.")
                         for d in downloaded:
                             os.remove(d)
                         print("temporary files heve been removed")
             else:
                 if text:
-                    self.bot.send_message(chat.id, text)
+                    self.bot.send_message(chat_id, text)
 
     def send_posts(self, message, count):
-        response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=count)
-        result = self._parse_response(response)
+        result = self.__group.get_posts(count)
         self._send_retrieved_posts(result, message.chat)
-        
-        
-    def _user_registered(self, chat):
-        self._db_cursor.execute("""SELECT * from users WHERE chat_id = """ + str(chat.id))
+    
+    # def _is_new_post(self, chat):
+    #     last_post = self.__ac.get_last_post(chat)
+    #     response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=2)
 
-        rows = self._db_cursor.fetchall()
-        if len(rows) == 0:
-            return False
-        return True
-    def _register_user(self, chat, last_post_id):
-        self._db_cursor.execute("INSERT INTO users VALUES({0}, {1})".format(str(chat.id), str(last_post_id)))
-        self._db_conn.commit()
+    #     first = response['items'][0]
+    #     second = response['items'][1]
 
-    def _retrieve_posts(self, last_post):
-        new_last_post = 0
-        offset = 0
-        result = []
+    #     if 'is_pinned' in first.keys():
+    #         return second['id'] != last_post
+    #     else:
+    #         return first['id'] != last_post
+
+    def _perform_vk_update_loop(self):
+        print("Update loop started")
         while True:
-            response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=1, offset = offset)
-            if 'is_pinned' in response['items'][0].keys():
-                offset += 1
-                continue
-            if response['items'][0]['id'] == last_post:
-                break
-            offset += 1
+            
+            if self.__group.is_new_post(self.last_post):
+                result, last_post = self.__group.retrieve_posts(self.last_post)
 
-        if offset == 0:
-            return result
+                for chat in self.users:
+                    print(chat)
+                    self._send_retrieved_posts(result, chat)
 
-        response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=offset)
-        new_last_post = self._get_last_post(response)
-        result = self._parse_response(response)
+                self.__ac.set_last_post(last_post)
+                self.last_post = last_post
 
-        return result, new_last_post
-
-    def _is_new_post(self, chat):
-        last_post = self._get_last_post_db(chat)
-        response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=2)
-
-        first = response['items'][0]
-        second = response['items'][1]
-
-        if 'is_pinned' in first.keys():
-            return second['id'] != last_post
-        else:
-            return first['id'] != last_post
-
-    def _perform_vk_update_loop(self, chat):
-        chat = telebot.types.Chat(chat, "null")
-        print("Started update loop for chat " + str(chat.id))
-        while True:
-            if self._is_new_post(chat):
-                last_post = self._get_last_post_db(chat)
-                result, last_post = self._retrieve_posts(last_post)
-        
-                self._send_retrieved_posts(result, chat)
-                self._set_last_post_db(last_post, chat)
+                print("New posts were send. Last post: " + str(self.last_post))
             else:
                 pass
                 #self.bot.send_message(chat.id, "Новых мемесов нет")
-            time.sleep(30)
-
-        
+            time.sleep(5)
 
     def _add_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_work(message):
             #self.send_posts(message, 5)
-            if self._user_registered(message.chat):
+            if self.__ac.user_registered(message.chat.id):
                 #Get last post id and retrieve all post until this value
-                last_post = self._get_last_post_db(message.chat)
-                self.bot.send_message(message.chat.id, "You have been already registered. Your last post is " + str(last_post))
+                # last_post = self.__ac.get_last_post(message.chat)
+                self.bot.send_message(message.chat.id, "You have been already registered. Your last post is " + str(self.last_post))
             else:
                 #Retrieve last 10 posts and add a user to DB with last post id
-                response = self.vk.wall.get(domain=PUBLIC_DOMEN, count=10)
-                last_post = self._get_last_post(response)
-                result = self._parse_response(response)
-                self._send_retrieved_posts(result, message.chat)
+                result = self.__group.get_posts(10)
+                self._send_retrieved_posts(result, message.chat.id)
+                last_post = self.__group.get_last_post_id()
 
-                self._register_user(message.chat, last_post)
+                self.__ac.register_user(message.chat.id)
+                self.users.append(message.chat.id)
 
-                self.bot.send_message(message.chat.id, "You are now registered with id " + str(message.chat.id) + " and last post " + str(last_post))
-                t = threading.Thread(target=self._perform_vk_update_loop, args=(message.chat.id, ))
-                t.start()
+                self.bot.send_message(message.chat.id, "You are now registered with id " + str(message.chat.id) + " and last post " + str(self.last_post))
+                # t = threading.Thread(target=self._perform_vk_update_loop, args=(message.chat.id, ))
+                # t.start()
+                if self.waiting_for_users:
+                    self.__ac.set_last_post(last_post)
+                    self.last_post = last_post
+                    t = threading.Thread(target=self._perform_vk_update_loop)
+                    t.start()
+                    self.waiting_for_users = False
                 self.bot.send_message(message.chat.id, "You have been subscripted for updates")
+
+                print("User with chat_id " + str(message.chat.id) + " was registered")
 
 
         @self.bot.message_handler(commands=['update'])
         def update_work(message):
-            if not self._user_registered(message.chat):
+            if not self.__ac.user_registered(message.chat.id):
                 self.bot.send_message(message.chat.id, "Please, do /start before")
                 return
-            if self._is_new_post(message.chat):
-                last_post = self._get_last_post_db(message.chat)
-                result, last_post = self._retrieve_posts(last_post)
-    
-                self._send_retrieved_posts(result, message.chat)
-                self._set_last_post_db(last_post, message.chat)
             else:
-                self.bot.send_message(message.chat.id, "Новых мемесов нет")
-
-
-        
+                self.bot.send_message(message.chat.id, "Команда отныне не работает")
+    
+    # def polling_worker(self):
+    #     while True:
+    #         try:
+    #             self.bot.polling()
+    #             print("Polling started")
+    #         except requests.exceptions.Timeout as e:
+    #             print("Exception occured when polling: " + str(e))
+    #             print("Restarting polling.....")
+    
     def updates_listener_start(self):
-        poll = threading.Thread(target=self.bot.polling)
+        poll = threading.Thread(target=self.bot.polling, kwargs=dict(none_stop=True, timeout=30))
         poll.start()
-        self._db_cursor.execute("""SELECT chat_id FROM users""")
-        rows = self._db_cursor.fetchall()
+        print("Polling started")
 
-        for row in rows:
-            t = threading.Thread(target=self._perform_vk_update_loop, args=(row[0], ))
+        if len(self.users) > 0:
+            t = threading.Thread(target=self._perform_vk_update_loop)
             t.start()
+        else:
+            print("There are no users yet. Update loop waiting for users")
 
         poll.join()
