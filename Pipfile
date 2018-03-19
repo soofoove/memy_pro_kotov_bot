@@ -1,12 +1,15 @@
 [[source]]
 url = "https://pypi.python.org/simple"
 verify_ssl = true
+name = "pypi"
 
 [packages]
 pyTelegramBotAPI = "*"
 vk_api = "*"
 wget = "*"
 psycopg2-binary = "*"
+
+[dev-packages]
 
 [requires]
 python_version = "3.6"
