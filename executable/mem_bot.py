@@ -8,7 +8,6 @@ import wget
 import psycopg2
 import threading
 import time
-import requests
 
 
 class MemyProKotovBot:
