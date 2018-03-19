@@ -7,5 +7,6 @@ pyTelegramBotAPI = "*"
 vk_api = "*"
 wget = "*"
 psycopg2-binary = "*"
+
 [requires]
 python_version = "3.6"
