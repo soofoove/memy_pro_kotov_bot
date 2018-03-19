@@ -1,11 +1,11 @@
 import vk_api
-import bot_settings
+from bot_settings import *
 
 
 class VkGroup:
     def __init__(self, vk_API):
         self.__vk = vk_API
-        self.__domen = bot_settings.PUBLIC_DOMEN
+        self.__domen = PUBLIC_DOMEN
 
 
     def get_last_post_id(self):

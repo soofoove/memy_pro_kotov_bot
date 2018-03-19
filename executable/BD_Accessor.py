@@ -1,5 +1,5 @@
 import psycopg2
-import bot_settings
+from bot_settings import *
 
 class _singleton:
     def __init__(self, cls):
@@ -16,7 +16,7 @@ def singleton(cls):
 @singleton
 class Accessor:
     def __init__(self):
-        self.__conn = psycopg2.connect(bot_settings.DATABASE_URL, sslmode='require')
+        self.__conn = psycopg2.connect(DATABASE_URL, sslmode='require')
         self.__cursor = self.__conn.cursor()
     
     def get_last_post(self):

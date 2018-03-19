@@ -1,6 +1,6 @@
 from bot_settings import *
-import BD_Accessor
-import VK_Group
+from BD_Accessor import *
+from VK_Group import *
 import vk_api
 import telebot
 import os
@@ -21,8 +21,8 @@ class MemyProKotovBot:
         self.vk_session.auth()       
         # self.vk = self.vk_session.get_api()
 
-        self.__group = VK_Group.VkGroup(self.vk_session.get_api())
-        self.__ac = BD_Accessor.Accessor()
+        self.__group = VkGroup(self.vk_session.get_api())
+        self.__ac = Accessor()
 
         self._start_first_init()
         
